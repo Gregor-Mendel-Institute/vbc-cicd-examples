@@ -167,5 +167,78 @@ The example is taken from Platinum application: https://bitbucket.imp.ac.at/proj
 **Jenkinsfile** Collapse source
 
 ```groovy
-`#!/usr/bin/env groovy` `// test implementation for Platinum application``def` `platinumTest = { defaultImageName, allBuilds ->`` ``def` `db_user = ``'platinum'`` ``def` `db_pass = ``'test'`` ``def` `db_name = ``'platinum_test'` ` ``// create database, setup DB user access`` ``def` `db_cont = allBuilds.db.image.run(``"--env 'POSTGRES_USER=${db_user}' --env 'POSTGRES_PASSWORD=${db_pass}' --env 'POSTGRES_DB=${db_name}'"``)` ` ``// give container time to do full db init`` ``sleep time: ``10``, unit: ``'SECONDS'`` ``echo ``"started db container, id: ${db_cont.id}"` ` ``def` `db_uri = ``"postgresql+psycopg2://${db_user}:${db_pass}@${db_cont.id}/${db_name}"`` ``// link app container to db container, expose platinum test config path`` ``echo ``"db_uri: ${db_uri}"`` ``// prepare extra oidc secrets`` ``def` `secretsFile = ``"${WORKSPACE}/oidc_client_secrets.yaml"`` ``withCredentials([usernamePassword(credentialsId: ``'platinum-adfs-client-config'``, usernameVariable: ``'OIDC_CLIENT_ID'``, passwordVariable: ``'OIDCS_CLIENT_SECRET'``)]) {``   ``def` `oidc_secrets = [``     ``adfs_client_id: ``"${env.OIDC_CLIENT_ID}"``,``     ``adfs_client_secret: ``"${env.OIDCS_CLIENT_SECRET}"``   ``]``   ``echo ``"oidc secrets in ${secretsFile}"``   ``writeYaml file: secretsFile, data: oidc_secrets`` ``}` ` ``// run actual tests`` ``try` `{``   ``allBuilds.webservice.image.inside(``"--link ${db_cont.id} -e PLATINUM_DATABASE_URI=${db_uri} -e OIDC_CLIENT_SECRETS=${secretsFile}"``) {` `     ``// run the behave tests``     ``echo ``"running behave tests"``     ``sh returnStatus: true, script: ``""``"cd /srv/webservice/``       ``behave --junit --junit-directory ${env.WORKSPACE}``     ``""``"``   ``}`` ``}`` ``catch` `(exc) {``  ``echo ``"something bad happened"``  ``echo ``"${exc}"`` ``}`` ``finally` `{``  ``// ensure db container goes away``  ``echo ``"stopping db container"``  ``db_cont.stop()` `  ``// collect behave test results``  ``junit ``"TESTS-*.xml"`` ``}``}` `// tower jobs to trigger after build/push``def` `towerJobs = [`` ``tags:  [jobName:``"App Platinum Prod"``, jobTags: ``"reload"``, extraVars: ``"image_tag: latest"``],`` ``develop: [jobName:``"App Platinum Dev"``, jobTags: ``"reload"``, extraVars: ``"image_tag: develop"``],`` ``clip:  [jobName:``"App Platinum Dev"``, jobTags: ``"reload"``, extraVars: ``"image_tag: clip"``]``]` `// additional images to build, (same namespace, tag, registry as above, tests default to global params) list of dicts:``def` `extraImages =`` ``[``  ``[imageName: ``"db"``, dockerFile: ``"./Dockerfile.db"``, dockerContext: ``"."``]`` ``]` `buildDockerImage([imageName: ``"webservice"``,``         ``test: platinumTest,``         ``pushRegistry: ``"clip-docker.artifactory.imp.ac.at"``,``         ``pushRegistryNamespace: ``"platinum"``,``         ``containerImages: extraImages,``         ``pushBranches: [``"develop"``, ``"clip"``],``         ``tower: towerJobs])`
+#!/usr/bin/env groovy
+ 
+// test implementation for Platinum application
+def platinumTest = { defaultImageName, allBuilds ->
+  def db_user = 'platinum'
+  def db_pass = 'test'
+  def db_name = 'platinum_test'
+ 
+  // create database, setup DB user access
+  def db_cont = allBuilds.db.image.run("--env 'POSTGRES_USER=${db_user}' --env 'POSTGRES_PASSWORD=${db_pass}' --env 'POSTGRES_DB=${db_name}'")
+ 
+  // give container time to do full db init
+  sleep time: 10, unit: 'SECONDS'
+  echo "started db container, id: ${db_cont.id}"
+ 
+  def db_uri = "postgresql+psycopg2://${db_user}:${db_pass}@${db_cont.id}/${db_name}"
+  // link app container to db container, expose platinum test config path
+  echo "db_uri: ${db_uri}"
+  // prepare extra oidc secrets
+  def secretsFile = "${WORKSPACE}/oidc_client_secrets.yaml"
+  withCredentials([usernamePassword(credentialsId: 'platinum-adfs-client-config', usernameVariable: 'OIDC_CLIENT_ID', passwordVariable: 'OIDCS_CLIENT_SECRET')]) {
+      def oidc_secrets = [
+          adfs_client_id: "${env.OIDC_CLIENT_ID}",
+          adfs_client_secret: "${env.OIDCS_CLIENT_SECRET}"
+      ]
+      echo "oidc secrets in ${secretsFile}"
+      writeYaml file: secretsFile, data: oidc_secrets
+  }
+ 
+  // run actual tests
+  try {
+      allBuilds.webservice.image.inside("--link ${db_cont.id} -e PLATINUM_DATABASE_URI=${db_uri} -e OIDC_CLIENT_SECRETS=${secretsFile}") {
+ 
+          // run the behave tests
+          echo "running behave tests"
+          sh returnStatus: true, script: """cd /srv/webservice/
+             behave --junit --junit-directory ${env.WORKSPACE}
+          """
+      }
+  }
+  catch (exc) {
+    echo "something bad happened"
+    echo "${exc}"
+  }
+  finally {
+    // ensure db container goes away
+    echo "stopping db container"
+    db_cont.stop()
+ 
+    // collect behave test results
+    junit "TESTS-*.xml"
+  }
+}
+ 
+// tower jobs to trigger after build/push
+def towerJobs = [
+  tags:    [jobName:"App Platinum Prod", jobTags: "reload", extraVars: "image_tag: latest"],
+  develop: [jobName:"App Platinum Dev", jobTags: "reload", extraVars: "image_tag: develop"],
+  clip:    [jobName:"App Platinum Dev", jobTags: "reload", extraVars: "image_tag: clip"]
+]
+ 
+// additional images to build, (same namespace, tag, registry as above, tests default to global params) list of dicts:
+def extraImages =
+  [
+    [imageName: "db", dockerFile: "./Dockerfile.db", dockerContext: "."]
+  ]
+ 
+buildDockerImage([imageName: "webservice",
+                  test: platinumTest,
+                  pushRegistry: "clip-docker.artifactory.imp.ac.at",
+                  pushRegistryNamespace: "platinum",
+                  containerImages: extraImages,
+                  pushBranches: ["develop", "clip"],
+                  tower: towerJobs])
 ```
