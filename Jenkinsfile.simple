@@ -1,0 +1,5 @@
+// most simple example
+// a Dockerfile in rootdir
+// no testing is defined
+// all branches "develop" and "myfeature" will be pushed to the container registry
+buildDockerImage([imageName: "my-image", pushRegistryNamespace: "mygroup", testCmd: null, pushBranches:["develop", "myfeature"]])
